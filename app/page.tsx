@@ -84,21 +84,18 @@ export default function Home() {
       const inserted = await supabase.from('profiles').upsert({ id: sessionUser.id, daily_loss_limit: 300, max_trades: 2, current_equity: 0 }).select().maybeSingle();
       if (inserted.data) { setProfile(inserted.data as Profile); setCurrentEquity(String((inserted.data as Profile).current_equity ?? 0)); }
     }
-    // Keep one saved compounding snapshot per local calendar day. A new day starts
-    // from yesterday's saved closing balance; first use starts from CAD 1,000.
+    // Automatically compound from the initial CAD 1,000 using all logged P&L
+    // dated before today. This recalculates today's opening balance when trades
+    // are added, edited, or deleted; manual current equity does not override it.
     const day = todayLocal();
-    const dayRes = await supabase.from('compounding_days').select('*').eq('user_id', sessionUser.id).eq('trading_date', day).maybeSingle();
-    if (dayRes.data) {
-      setCompoundingDay(dayRes.data as CompoundingDay);
-    } else {
-      const previous = await supabase.from('compounding_days').select('*').eq('user_id', sessionUser.id).lt('trading_date', day).order('trading_date', { ascending: false }).limit(1).maybeSingle();
-      const previousRow = previous.data as CompoundingDay | null;
-      const fallbackEquity = Number(profileRes.data?.current_equity ?? 0);
-      const openingBalance = previousRow?.closing_balance != null ? Number(previousRow.closing_balance) : (fallbackEquity > 0 ? fallbackEquity : 1000);
-      const created = await supabase.from('compounding_days').upsert({ user_id: sessionUser.id, trading_date: day, starting_balance: openingBalance, target_percent: 2 }, { onConflict: 'user_id,trading_date' }).select().single();
-      if (created.data) setCompoundingDay(created.data as CompoundingDay);
-      if (created.error) setStatus(`Compounding tracker needs its database migration: ${created.error.message}`);
-    }
+    const priorTrades = ((tradeRes.data ?? []) as Trade[]).filter(t => t.trade_date < day);
+    const priorPnl = priorTrades.reduce((sum, t) => sum + Number(t.pnl), 0);
+    const openingBalance = 1000 + priorPnl;
+    const savedDay = await supabase.from('compounding_days')
+      .upsert({ user_id: sessionUser.id, trading_date: day, starting_balance: openingBalance, target_percent: 2 }, { onConflict: 'user_id,trading_date' })
+      .select().single();
+    if (savedDay.data) setCompoundingDay(savedDay.data as CompoundingDay);
+    if (savedDay.error) setStatus(`Compounding tracker needs its database migration: ${savedDay.error.message}`);
     setLoading(false);
   }, [supabase, sessionUser]);
 
