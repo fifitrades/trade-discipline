@@ -8,7 +8,8 @@ type Trade = {
   pnl: number; setup_valid: boolean; confirmation_waited: boolean; emotion: string; notes: string;
   created_at: string;
 };
-type Profile = { id: string; daily_loss_limit: number; max_trades: number };
+type Profile = { id: string; daily_loss_limit: number; max_trades: number; current_equity?: number };
+type CashMovement = { id: string; user_id: string; movement_date: string; movement_type: 'deposit' | 'withdrawal'; amount: number; notes: string; created_at: string };
 
 const money = (n: number) => new Intl.NumberFormat('en-CA', { style: 'currency', currency: 'CAD', maximumFractionDigits: 2 }).format(n);
 const todayLocal = () => {
@@ -27,6 +28,11 @@ export default function Home() {
   const [password, setPassword] = useState('');
   const [authMessage, setAuthMessage] = useState('');
   const [trades, setTrades] = useState<Trade[]>([]);
+  const [cashMovements, setCashMovements] = useState<CashMovement[]>([]);
+  const [currentEquity, setCurrentEquity] = useState('0');
+  const [calendarMonth, setCalendarMonth] = useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1));
+  const [selectedDay, setSelectedDay] = useState(todayLocal());
+  const [cashForm, setCashForm] = useState({ movement_date: todayLocal(), movement_type: 'deposit' as 'deposit' | 'withdrawal', amount: '', notes: '' });
   const [profile, setProfile] = useState<Profile | null>(null);
   const [dailyLimit, setDailyLimit] = useState('300');
   const [maxTrades, setMaxTrades] = useState('2');
@@ -57,18 +63,21 @@ export default function Home() {
   const loadData = useCallback(async () => {
     if (!supabase || !sessionUser) return;
     setLoading(true);
-    const [tradeRes, profileRes] = await Promise.all([
+    const [tradeRes, profileRes, cashRes] = await Promise.all([
       supabase.from('trades').select('*').order('trade_date', { ascending: false }).order('created_at', { ascending: false }).limit(1000),
       supabase.from('profiles').select('*').eq('id', sessionUser.id).maybeSingle(),
+      supabase.from('cash_movements').select('*').order('movement_date', { ascending: false }).order('created_at', { ascending: false }).limit(2000),
     ]);
     if (tradeRes.error) setStatus(`Could not load trades: ${tradeRes.error.message}`);
     else setTrades((tradeRes.data ?? []) as Trade[]);
+    if (cashRes.error) setStatus(`Could not load deposits/withdrawals: ${cashRes.error.message}`);
+    else setCashMovements((cashRes.data ?? []) as CashMovement[]);
     if (profileRes.data) {
       const p = profileRes.data as Profile;
-      setProfile(p); setDailyLimit(String(p.daily_loss_limit)); setMaxTrades(String(p.max_trades));
+      setProfile(p); setDailyLimit(String(p.daily_loss_limit)); setMaxTrades(String(p.max_trades)); setCurrentEquity(String(p.current_equity ?? 0));
     } else {
-      const inserted = await supabase.from('profiles').upsert({ id: sessionUser.id, daily_loss_limit: 300, max_trades: 2 }).select().maybeSingle();
-      if (inserted.data) setProfile(inserted.data as Profile);
+      const inserted = await supabase.from('profiles').upsert({ id: sessionUser.id, daily_loss_limit: 300, max_trades: 2, current_equity: 0 }).select().maybeSingle();
+      if (inserted.data) { setProfile(inserted.data as Profile); setCurrentEquity(String((inserted.data as Profile).current_equity ?? 0)); }
     }
     setLoading(false);
   }, [supabase, sessionUser]);
@@ -84,6 +93,17 @@ export default function Home() {
   const wins = trades.filter(t => Number(t.pnl) > 0);
   const losses = trades.filter(t => Number(t.pnl) < 0);
   const totalPnl = trades.reduce((sum, t) => sum + Number(t.pnl), 0);
+  const totalDeposited = cashMovements.filter(m => m.movement_type === 'deposit').reduce((sum, m) => sum + Number(m.amount), 0);
+  const totalWithdrawn = cashMovements.filter(m => m.movement_type === 'withdrawal').reduce((sum, m) => sum + Number(m.amount), 0);
+  const netContributions = totalDeposited - totalWithdrawn;
+  const equityValue = Number(profile?.current_equity ?? currentEquity ?? 0);
+  const netResultVsCapital = equityValue - netContributions;
+  const monthKey = `${calendarMonth.getFullYear()}-${String(calendarMonth.getMonth() + 1).padStart(2, '0')}`;
+  const monthTrades = trades.filter(t => t.trade_date.startsWith(monthKey));
+  const monthPnl = monthTrades.reduce((sum, t) => sum + Number(t.pnl), 0);
+  const selectedDayTrades = trades.filter(t => t.trade_date === selectedDay);
+  const calendarCells = useMemo(() => { const year = calendarMonth.getFullYear(); const month = calendarMonth.getMonth(); const first = new Date(year, month, 1); const start = (first.getDay() + 6) % 7; const count = new Date(year, month + 1, 0).getDate(); return [...Array(start).fill(null), ...Array.from({ length: count }, (_, i) => `${year}-${String(month + 1).padStart(2, '0')}-${String(i + 1).padStart(2, '0')}`)]; }, [calendarMonth]);
+  const dayPnl = (day: string) => trades.filter(t => t.trade_date === day).reduce((sum, t) => sum + Number(t.pnl), 0);
   const winDays = useMemo(() => {
     const days = new Map<string, number>();
     trades.forEach(t => days.set(t.trade_date, (days.get(t.trade_date) ?? 0) + Number(t.pnl)));
@@ -132,6 +152,28 @@ export default function Home() {
     setSaving(false);
   }
 
+  async function saveCashMovement(e: FormEvent) {
+    e.preventDefault(); if (!supabase || !sessionUser) return;
+    const amount = Number(cashForm.amount);
+    if (!Number.isFinite(amount) || amount <= 0) { setStatus('Enter a positive amount for the deposit or withdrawal.'); return; }
+    setSaving(true); setStatus('');
+    const { data, error } = await supabase.from('cash_movements').insert({ user_id: sessionUser.id, movement_date: cashForm.movement_date, movement_type: cashForm.movement_type, amount, notes: cashForm.notes.trim() }).select().single();
+    if (error) setStatus(`Could not save cash movement: ${error.message}`);
+    else { setCashMovements(items => [data as CashMovement, ...items]); setCashForm(f => ({ ...f, amount: '', notes: '' })); setStatus('Deposit/withdrawal saved.'); }
+    setSaving(false);
+  }
+
+  async function saveCurrentEquity(e: FormEvent) {
+    e.preventDefault(); if (!supabase || !sessionUser) return;
+    const amount = Number(currentEquity);
+    if (!Number.isFinite(amount) || amount < 0) { setStatus('Enter a valid current account equity amount.'); return; }
+    setSaving(true); setStatus('');
+    const { data, error } = await supabase.from('profiles').upsert({ id: sessionUser.id, daily_loss_limit: Number(profile?.daily_loss_limit ?? dailyLimit), max_trades: Number(profile?.max_trades ?? maxTrades), current_equity: amount }).select().single();
+    if (error) setStatus(`Could not save current equity: ${error.message}`);
+    else { setProfile(data as Profile); setCurrentEquity(String(amount)); setStatus('Current account equity saved.'); }
+    setSaving(false);
+  }
+
   async function saveSettings(e: FormEvent) {
     e.preventDefault(); if (!supabase || !sessionUser) return;
     const l = Number(dailyLimit), c = Number(maxTrades);
@@ -166,6 +208,9 @@ export default function Home() {
     <section className="main-content"><header className="topbar"><div><p className="eyebrow">PERSONAL LIVE ACCOUNT</p><h1>Your trading cockpit</h1></div><div className="topbar-right"><span className="date-pill">{new Date().toLocaleDateString('en-CA', { weekday: 'short', month: 'short', day: 'numeric' })}</span><button className="button primary" onClick={() => setShowForm(v => !v)}>＋ Log a trade</button></div></header>
       {status && <div className="status-banner" role="status">{status}<button onClick={() => setStatus('')} aria-label="Dismiss">×</button></div>}
       <div className={`guardrail ${guardrailHit ? 'danger' : 'safe'}`}><div className="guardrail-icon">{guardrailHit ? '!' : '✓'}</div><div><strong>{guardrailHit ? 'Journal guardrail reached — stop this session' : 'Session guardrail'}</strong><p>{todayTrades.length} of {tradeCap} trades logged today · Daily P&L {money(todayPnl)} · Loss limit {money(Math.abs(limit))}</p></div><span className="guardrail-tag">{guardrailHit ? 'STOP' : 'ACTIVE'}</span></div>
+      <section className="account-summary panel"><div className="panel-heading"><div><p className="eyebrow">ACCOUNT PERFORMANCE</p><h2>Capital & cash flow</h2></div></div><div className="account-summary-grid"><div className="account-stat"><span>Trading P&amp;L</span><strong className={totalPnl >= 0 ? 'positive-text' : 'negative-text'}>{money(totalPnl)}</strong><small>Sum of logged trade results</small></div><div className="account-stat"><span>Total deposited</span><strong>{money(totalDeposited)}</strong><small>All recorded deposits</small></div><div className="account-stat"><span>Total withdrawn</span><strong>{money(totalWithdrawn)}</strong><small>All recorded withdrawals</small></div><div className="account-stat"><span>Net contributions</span><strong>{money(netContributions)}</strong><small>Deposits minus withdrawals</small></div><div className="account-stat"><span>Current account equity</span><strong>{money(equityValue)}</strong><small>Manually entered balance/equity</small></div><div className="account-stat"><span>Net result vs. capital</span><strong className={netResultVsCapital >= 0 ? 'positive-text' : 'negative-text'}>{money(netResultVsCapital)}</strong><small>Equity minus net contributions</small></div></div><form className="equity-form" onSubmit={saveCurrentEquity}><label>Update current account equity (CAD)<input type="number" min="0" step="0.01" value={currentEquity} onChange={e => setCurrentEquity(e.target.value)} required /></label><button className="button secondary" disabled={saving}>{saving ? 'Saving…' : 'Save equity'}</button></form><p className="tiny muted">Net result vs. capital is an estimate based on the equity you enter and recorded deposits/withdrawals. Include all relevant transfers and adjustments for an accurate figure. Trading P&amp;L is calculated separately from your logged trades.</p></section>
+      <section id="calendar" className="panel calendar-panel"><div className="panel-heading calendar-heading"><div><p className="eyebrow">DAILY PERFORMANCE</p><h2>Trading calendar</h2><p className="muted tiny">Monthly P&amp;L: <strong className={monthPnl >= 0 ? 'positive-text' : 'negative-text'}>{money(monthPnl)}</strong> · {monthTrades.length} trades</p></div><div className="calendar-controls"><button type="button" className="button secondary" onClick={() => setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() - 1, 1))}>‹</button><strong>{calendarMonth.toLocaleDateString('en-CA', { month: 'long', year: 'numeric' })}</strong><button type="button" className="button secondary" onClick={() => setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + 1, 1))}>›</button></div></div><div className="calendar-grid">{['Mon','Tue','Wed','Thu','Fri','Sat','Sun'].map(d => <div key={d} className="calendar-weekday">{d}</div>)}{calendarCells.map((day, i) => day ? <button type="button" key={day} onClick={() => setSelectedDay(day)} className={`calendar-day ${selectedDay === day ? 'selected' : ''} ${trades.some(t => t.trade_date === day) ? (dayPnl(day) >= 0 ? 'profit-day' : 'loss-day') : ''}`}><span>{Number(day.slice(-2))}</span>{trades.some(t => t.trade_date === day) && <strong>{money(dayPnl(day))}</strong>}</button> : <div key={`blank-${i}`} className="calendar-empty" />)}</div><div className="selected-day-detail"><h3>{new Date(`${selectedDay}T12:00:00`).toLocaleDateString('en-CA', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}</h3>{selectedDayTrades.length ? <><p className={dayPnl(selectedDay) >= 0 ? 'positive-text' : 'negative-text'}>Daily P&amp;L: <strong>{money(dayPnl(selectedDay))}</strong></p><ul>{selectedDayTrades.map(t => <li key={t.id}>{t.symbol} · {t.direction} · <strong className={Number(t.pnl) >= 0 ? 'positive-text' : 'negative-text'}>{money(Number(t.pnl))}</strong> · {t.emotion}</li>)}</ul></> : <p className="muted tiny">No trades logged for this date.</p>}</div></section>
+      <section className="panel cash-panel"><div className="panel-heading"><div><p className="eyebrow">ACCOUNT ACTIVITY</p><h2>Deposits &amp; withdrawals</h2></div></div><form className="cash-form" onSubmit={saveCashMovement}><label>Type<select value={cashForm.movement_type} onChange={e => setCashForm({ ...cashForm, movement_type: e.target.value as 'deposit' | 'withdrawal' })}><option value="deposit">Deposit</option><option value="withdrawal">Withdrawal</option></select></label><label>Date<input type="date" value={cashForm.movement_date} onChange={e => setCashForm({ ...cashForm, movement_date: e.target.value })} required /></label><label>Amount (CAD)<input type="number" min="0.01" step="0.01" value={cashForm.amount} onChange={e => setCashForm({ ...cashForm, amount: e.target.value })} placeholder="0.00" required /></label><label>Notes (optional)<input value={cashForm.notes} onChange={e => setCashForm({ ...cashForm, notes: e.target.value })} placeholder="e.g. monthly funding" /></label><button className="button primary" disabled={saving}>{saving ? 'Saving…' : 'Add movement'}</button></form><div className="cash-table-wrap"><table><thead><tr><th>Date</th><th>Type</th><th>Amount</th><th>Notes</th></tr></thead><tbody>{cashMovements.length ? cashMovements.map(m => <tr key={m.id}><td>{dateLabel(m.movement_date)}</td><td>{m.movement_type === 'deposit' ? 'Deposit' : 'Withdrawal'}</td><td className={m.movement_type === 'deposit' ? 'positive-text' : 'negative-text'}>{m.movement_type === 'deposit' ? '+' : '−'}{money(Number(m.amount))}</td><td>{m.notes || '—'}</td></tr>) : <tr><td colSpan={4} className="muted">No deposits or withdrawals recorded yet.</td></tr>}</tbody></table></div></section>
       <section id="overview" className="metric-grid"><Metric label="Net P&L · all logged trades" value={money(totalPnl)} tone={totalPnl >= 0 ? 'positive' : 'negative'} note={`${trades.length} trades recorded`}/><Metric label="Green / red days" value={`${winDays} / ${redDays}`} note="Days with a non-zero net result"/><Metric label="Average winning trade" value={money(avgWin)} tone="positive" note={`${wins.length} winning trades`}/><Metric label="Average losing trade" value={money(avgLoss)} tone="negative" note={`${losses.length} losing trades`}/></section>
       {showForm && <section className="panel form-panel"><div className="panel-heading"><div><p className="eyebrow">JOURNAL ENTRY</p><h2>Log a trade</h2></div><button className="icon-button" onClick={() => setShowForm(false)}>×</button></div>{guardrailHit && <div className="notice danger-text">Your session guardrail is reached. Do not place another trade. If you already took a trade, still log it below so the analysis stays complete.</div>}<form onSubmit={addTrade} className="trade-form"><label>Date<input type="date" value={form.trade_date} onChange={e => setForm({ ...form, trade_date: e.target.value })} required/></label><label>Symbol<input value={form.symbol} onChange={e => setForm({ ...form, symbol: e.target.value })} required/></label><label>Direction<select value={form.direction} onChange={e => setForm({ ...form, direction: e.target.value as 'Long' | 'Short' })}><option>Long</option><option>Short</option></select></label><label>Net P&L (CAD)<input type="number" step="0.01" value={form.pnl} onChange={e => setForm({ ...form, pnl: e.target.value })} placeholder="e.g. -125.50" required/></label><label>Emotion at entry<select value={form.emotion} onChange={e => setForm({ ...form, emotion: e.target.value })}><option>Calm</option><option>FOMO</option><option>Impatient</option><option>Frustrated</option><option>Revenge / recovery</option><option>Overconfident</option><option>Bored</option><option>Anxious</option></select></label><div className="toggle-row"><label className="check-label"><input type="checkbox" checked={form.setup_valid} onChange={e => setForm({ ...form, setup_valid: e.target.checked })}/> My setup was valid</label><label className="check-label"><input type="checkbox" checked={form.confirmation_waited} onChange={e => setForm({ ...form, confirmation_waited: e.target.checked })}/> I waited for confirmation</label></div><label className="wide">Notes / what happened<textarea rows={3} value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} placeholder="What did you see? What were you feeling? Did you follow the plan?"/></label><div className="form-actions wide"><p className="tiny muted">Log each trade honestly, including rule-breaking trades. This journal does not connect to your broker.</p><button className="button primary" disabled={saving}>{saving ? 'Saving…' : 'Save trade'}</button></div></form></section>}
       <section id="analysis" className="analysis-grid"><div className="panel"><div className="panel-heading"><div><p className="eyebrow">PROCESS OVER P&L</p><h2>Rule-following breakdown</h2></div><span className="panel-icon">⌁</span></div><div className="comparison"><div className="comparison-row"><div><span className="legend-dot gold"/> <span>Compliant trades</span></div><strong className={compliantPnl >= 0 ? 'positive-text' : 'negative-text'}>{money(compliantPnl)}</strong></div><div className="bar-track"><div className="bar-fill gold-fill" style={{ width: `${trades.length ? compliantTrades.length / trades.length * 100 : 0}%` }}/></div><p className="muted tiny">{compliantTrades.length} trades where setup was valid and confirmation was respected</p><div className="comparison-row"><div><span className="legend-dot red"/> <span>Rule-breaking trades</span></div><strong className={ruleBreakPnl >= 0 ? 'positive-text' : 'negative-text'}>{money(ruleBreakPnl)}</strong></div><div className="bar-track"><div className="bar-fill red-fill" style={{ width: `${trades.length ? ruleBreakTrades.length / trades.length * 100 : 0}%` }}/></div><p className="muted tiny">{ruleBreakTrades.length} trades with an invalid setup or missing confirmation</p></div><div className="insight-box"><span className="insight-star">✦</span><p>{trades.length ? `You have logged ${trades.length} trades. Keep logging every trade so we can compare compliant execution with impulsive entries over time.` : 'Your first goal is to build a complete record. Log wins, losses, and rule-breaking trades—not just the memorable ones.'}</p></div></div>
