@@ -199,7 +199,7 @@ export default function Home() {
     else {
       setStatus(editingTradeId ? 'Trade updated.' : 'Trade saved. Review the rule-following fields honestly.');
       setEditingTradeId(null);
-      setForm({ trade_date: todayLocal(), symbol: 'XAUUSD', direction: 'Long', pnl: '', setup_valid: true, confirmation_waited: true, emotion: 'Calm', notes: '' });
+      setForm({ trade_date: todayLocal(), trade_time: '09:30', symbol: 'XAUUSD', direction: 'Long', pnl: '', setup_valid: true, confirmation_waited: true, emotion: 'Calm', notes: '' });
       setShowForm(false); await loadData();
     }
     setSaving(false);
