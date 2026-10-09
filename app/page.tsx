@@ -10,6 +10,7 @@ type Trade = {
 };
 type Profile = { id: string; daily_loss_limit: number; max_trades: number; current_equity?: number };
 type CashMovement = { id: string; user_id: string; movement_date: string; movement_type: 'deposit' | 'withdrawal'; amount: number; notes: string; created_at: string };
+type CompoundingDay = { id: string; user_id: string; trading_date: string; starting_balance: number; target_percent: number; closing_balance: number | null };
 
 const money = (n: number) => new Intl.NumberFormat('en-CA', { style: 'currency', currency: 'CAD', maximumFractionDigits: 2 }).format(n);
 const todayLocal = () => {
@@ -30,6 +31,9 @@ export default function Home() {
   const [trades, setTrades] = useState<Trade[]>([]);
   const [cashMovements, setCashMovements] = useState<CashMovement[]>([]);
   const [currentEquity, setCurrentEquity] = useState('0');
+  const [compoundingDay, setCompoundingDay] = useState<CompoundingDay | null>(null);
+  const [plannedRisk, setPlannedRisk] = useState('10');
+  const [plannedLeverage, setPlannedLeverage] = useState('');
   const [calendarMonth, setCalendarMonth] = useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1));
   const [selectedDay, setSelectedDay] = useState(todayLocal());
   const [cashForm, setCashForm] = useState({ movement_date: todayLocal(), movement_type: 'deposit' as 'deposit' | 'withdrawal', amount: '', notes: '' });
@@ -79,6 +83,21 @@ export default function Home() {
       const inserted = await supabase.from('profiles').upsert({ id: sessionUser.id, daily_loss_limit: 300, max_trades: 2, current_equity: 0 }).select().maybeSingle();
       if (inserted.data) { setProfile(inserted.data as Profile); setCurrentEquity(String((inserted.data as Profile).current_equity ?? 0)); }
     }
+    // Keep one saved compounding snapshot per local calendar day. A new day starts
+    // from yesterday's saved closing balance; first use starts from CAD 1,000.
+    const day = todayLocal();
+    const dayRes = await supabase.from('compounding_days').select('*').eq('user_id', sessionUser.id).eq('trading_date', day).maybeSingle();
+    if (dayRes.data) {
+      setCompoundingDay(dayRes.data as CompoundingDay);
+    } else {
+      const previous = await supabase.from('compounding_days').select('*').eq('user_id', sessionUser.id).lt('trading_date', day).order('trading_date', { ascending: false }).limit(1).maybeSingle();
+      const previousRow = previous.data as CompoundingDay | null;
+      const fallbackEquity = Number(profileRes.data?.current_equity ?? 0);
+      const openingBalance = previousRow?.closing_balance != null ? Number(previousRow.closing_balance) : (fallbackEquity > 0 ? fallbackEquity : 1000);
+      const created = await supabase.from('compounding_days').upsert({ user_id: sessionUser.id, trading_date: day, starting_balance: openingBalance, target_percent: 2 }, { onConflict: 'user_id,trading_date' }).select().single();
+      if (created.data) setCompoundingDay(created.data as CompoundingDay);
+      if (created.error) setStatus(`Compounding tracker needs its database migration: ${created.error.message}`);
+    }
     setLoading(false);
   }, [supabase, sessionUser]);
 
@@ -88,7 +107,12 @@ export default function Home() {
   const todayPnl = todayTrades.reduce((sum, t) => sum + Number(t.pnl), 0);
   const limit = Number(profile?.daily_loss_limit ?? dailyLimit ?? 300);
   const tradeCap = Number(profile?.max_trades ?? maxTrades ?? 2);
-  const guardrailHit = todayPnl <= -Math.abs(limit) || todayTrades.length >= tradeCap;
+  const dailyTarget = Math.max(0, Number(compoundingDay?.starting_balance ?? 1000) * Number(compoundingDay?.target_percent ?? 2) / 100);
+  const targetProgress = dailyTarget > 0 ? Math.max(0, Math.min(100, todayPnl / dailyTarget * 100)) : 0;
+  const dailyLossHit = todayPnl <= -Math.abs(limit);
+  const tradeCountHit = todayTrades.length >= tradeCap;
+  const targetReached = todayPnl >= dailyTarget && dailyTarget > 0;
+  const guardrailHit = dailyLossHit || tradeCountHit;
   const compliant = (t: Trade) => t.setup_valid && t.confirmation_waited;
   const wins = trades.filter(t => Number(t.pnl) > 0);
   const losses = trades.filter(t => Number(t.pnl) < 0);
@@ -170,7 +194,15 @@ export default function Home() {
     setSaving(true); setStatus('');
     const { data, error } = await supabase.from('profiles').upsert({ id: sessionUser.id, daily_loss_limit: Number(profile?.daily_loss_limit ?? dailyLimit), max_trades: Number(profile?.max_trades ?? maxTrades), current_equity: amount }).select().single();
     if (error) setStatus(`Could not save current equity: ${error.message}`);
-    else { setProfile(data as Profile); setCurrentEquity(String(amount)); setStatus('Current account equity saved.'); }
+    else {
+      setProfile(data as Profile); setCurrentEquity(String(amount));
+      if (compoundingDay) {
+        const { data: dayData, error: dayError } = await supabase.from('compounding_days').update({ closing_balance: amount }).eq('id', compoundingDay.id).select().single();
+        if (dayError) setStatus(`Equity saved, but compounding close could not be saved: ${dayError.message}`);
+        else setCompoundingDay(dayData as CompoundingDay);
+      }
+      setStatus('Current equity saved. It will become the next trading day’s compounding base.');
+    }
     setSaving(false);
   }
 
@@ -208,6 +240,7 @@ export default function Home() {
     <section className="main-content"><header className="topbar"><div><p className="eyebrow">PERSONAL LIVE ACCOUNT</p><h1>Your trading cockpit</h1></div><div className="topbar-right"><span className="date-pill">{new Date().toLocaleDateString('en-CA', { weekday: 'short', month: 'short', day: 'numeric' })}</span><button className="button primary" onClick={() => setShowForm(v => !v)}>＋ Log a trade</button></div></header>
       {status && <div className="status-banner" role="status">{status}<button onClick={() => setStatus('')} aria-label="Dismiss">×</button></div>}
       <div className={`guardrail ${guardrailHit ? 'danger' : 'safe'}`}><div className="guardrail-icon">{guardrailHit ? '!' : '✓'}</div><div><strong>{guardrailHit ? 'Journal guardrail reached — stop this session' : 'Session guardrail'}</strong><p>{todayTrades.length} of {tradeCap} trades logged today · Daily P&L {money(todayPnl)} · Loss limit {money(Math.abs(limit))}</p></div><span className="guardrail-tag">{guardrailHit ? 'STOP' : 'ACTIVE'}</span></div>
+      <section id="compounding" className="panel compounding-panel"><div className="panel-heading"><div><p className="eyebrow">DAILY COMPOUNDING & DISCIPLINE</p><h2>Today’s plan</h2><p className="muted tiny">{todayLocal()} · The daily target resets with the local calendar date.</p></div><span className="panel-icon">↗</span></div><div className="account-summary-grid"><div className="account-stat"><span>Starting balance today</span><strong>{money(Number(compoundingDay?.starting_balance ?? 1000))}</strong><small>First day defaults to $1,000 CAD</small></div><div className="account-stat"><span>2% target</span><strong>{money(dailyTarget)}</strong><small>Calculated from today’s starting balance</small></div><div className="account-stat"><span>Actual daily P&amp;L</span><strong className={todayPnl >= 0 ? 'positive-text' : 'negative-text'}>{money(todayPnl)}</strong><small>{todayTrades.length} of {tradeCap} trades used</small></div></div><div className="progress-label"><span>Progress toward target</span><strong>{Math.round(targetProgress)}%</strong></div><div className="bar-track compounding-progress"><div className="bar-fill gold-fill" style={{width:`${targetProgress}%`}} /></div>{targetReached && <div className="notice warning"><strong>Target reached.</strong> Your goal is complete for today. Do not increase size or keep trading just to make more.</div>}{guardrailHit && <div className="notice danger-text"><strong>STOP TRADING.</strong> {dailyLossHit ? 'Your maximum daily loss has been reached.' : ''} {tradeCountHit ? 'You have reached your daily trade limit.' : ''} This is a journal warning, not a broker lockout.</div>}<div className="compounding-risk-row"><label>Planned loss if this trade fails (CAD)<input type="number" min="0" step="0.01" value={plannedRisk} onChange={e => setPlannedRisk(e.target.value)} /></label><label>Planned leverage (optional)<input type="number" min="1" step="1" value={plannedLeverage} onChange={e => setPlannedLeverage(e.target.value)} placeholder="e.g. 100" /></label></div><p className={`notice ${Number(plannedRisk) > Number(compoundingDay?.starting_balance ?? 1000) * 0.01 ? 'warning' : ''}`}><strong>Risk check:</strong> {Number(plannedRisk) > Number(compoundingDay?.starting_balance ?? 1000) * 0.01 ? `This planned loss is more than 1% of today's starting balance (${money(Number(compoundingDay?.starting_balance ?? 1000) * 0.01)}). Consider reducing risk or skipping the trade.` : `Planned loss is within 1% of today's starting balance (${money(Number(compoundingDay?.starting_balance ?? 1000) * 0.01)}).`}{plannedLeverage && Number(plannedLeverage) > 100 ? ' High leverage entered: recheck position size and stop distance before trading.' : ''}</p><p className="tiny muted">At $1,000, a $300 daily loss limit equals 30% of the account. The tracker keeps your chosen limit but flags the account-level risk. Leverage alone does not determine risk; position size and stop distance matter too.</p></section>
       <section className="account-summary panel"><div className="panel-heading"><div><p className="eyebrow">ACCOUNT PERFORMANCE</p><h2>Capital & cash flow</h2></div></div><div className="account-summary-grid"><div className="account-stat"><span>Trading P&amp;L</span><strong className={totalPnl >= 0 ? 'positive-text' : 'negative-text'}>{money(totalPnl)}</strong><small>Sum of logged trade results</small></div><div className="account-stat"><span>Total deposited</span><strong>{money(totalDeposited)}</strong><small>All recorded deposits</small></div><div className="account-stat"><span>Total withdrawn</span><strong>{money(totalWithdrawn)}</strong><small>All recorded withdrawals</small></div><div className="account-stat"><span>Net contributions</span><strong>{money(netContributions)}</strong><small>Deposits minus withdrawals</small></div><div className="account-stat"><span>Current account equity</span><strong>{money(equityValue)}</strong><small>Manually entered balance/equity</small></div><div className="account-stat"><span>Net result vs. capital</span><strong className={netResultVsCapital >= 0 ? 'positive-text' : 'negative-text'}>{money(netResultVsCapital)}</strong><small>Equity minus net contributions</small></div></div><form className="equity-form" onSubmit={saveCurrentEquity}><label>Update current account equity (CAD)<input type="number" min="0" step="0.01" value={currentEquity} onChange={e => setCurrentEquity(e.target.value)} required /></label><button className="button secondary" disabled={saving}>{saving ? 'Saving…' : 'Save equity'}</button></form><p className="tiny muted">Net result vs. capital is an estimate based on the equity you enter and recorded deposits/withdrawals. Include all relevant transfers and adjustments for an accurate figure. Trading P&amp;L is calculated separately from your logged trades.</p></section>
       <section id="calendar" className="panel calendar-panel"><div className="panel-heading calendar-heading"><div><p className="eyebrow">DAILY PERFORMANCE</p><h2>Trading calendar</h2><p className="muted tiny">Monthly P&amp;L: <strong className={monthPnl >= 0 ? 'positive-text' : 'negative-text'}>{money(monthPnl)}</strong> · {monthTrades.length} trades</p></div><div className="calendar-controls"><button type="button" className="button secondary" onClick={() => setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() - 1, 1))}>‹</button><strong>{calendarMonth.toLocaleDateString('en-CA', { month: 'long', year: 'numeric' })}</strong><button type="button" className="button secondary" onClick={() => setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + 1, 1))}>›</button></div></div><div className="calendar-grid">{['Mon','Tue','Wed','Thu','Fri','Sat','Sun'].map(d => <div key={d} className="calendar-weekday">{d}</div>)}{calendarCells.map((day, i) => day ? <button type="button" key={day} onClick={() => setSelectedDay(day)} className={`calendar-day ${selectedDay === day ? 'selected' : ''} ${trades.some(t => t.trade_date === day) ? (dayPnl(day) >= 0 ? 'profit-day' : 'loss-day') : ''}`}><span>{Number(day.slice(-2))}</span>{trades.some(t => t.trade_date === day) && <strong>{money(dayPnl(day))}</strong>}</button> : <div key={`blank-${i}`} className="calendar-empty" />)}</div><div className="selected-day-detail"><h3>{new Date(`${selectedDay}T12:00:00`).toLocaleDateString('en-CA', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}</h3>{selectedDayTrades.length ? <><p className={dayPnl(selectedDay) >= 0 ? 'positive-text' : 'negative-text'}>Daily P&amp;L: <strong>{money(dayPnl(selectedDay))}</strong></p><ul>{selectedDayTrades.map(t => <li key={t.id}>{t.symbol} · {t.direction} · <strong className={Number(t.pnl) >= 0 ? 'positive-text' : 'negative-text'}>{money(Number(t.pnl))}</strong> · {t.emotion}</li>)}</ul></> : <p className="muted tiny">No trades logged for this date.</p>}</div></section>
       <section className="panel cash-panel"><div className="panel-heading"><div><p className="eyebrow">ACCOUNT ACTIVITY</p><h2>Deposits &amp; withdrawals</h2></div></div><form className="cash-form" onSubmit={saveCashMovement}><label>Type<select value={cashForm.movement_type} onChange={e => setCashForm({ ...cashForm, movement_type: e.target.value as 'deposit' | 'withdrawal' })}><option value="deposit">Deposit</option><option value="withdrawal">Withdrawal</option></select></label><label>Date<input type="date" value={cashForm.movement_date} onChange={e => setCashForm({ ...cashForm, movement_date: e.target.value })} required /></label><label>Amount (CAD)<input type="number" min="0.01" step="0.01" value={cashForm.amount} onChange={e => setCashForm({ ...cashForm, amount: e.target.value })} placeholder="0.00" required /></label><label>Notes (optional)<input value={cashForm.notes} onChange={e => setCashForm({ ...cashForm, notes: e.target.value })} placeholder="e.g. monthly funding" /></label><button className="button primary" disabled={saving}>{saving ? 'Saving…' : 'Add movement'}</button></form><div className="cash-table-wrap"><table><thead><tr><th>Date</th><th>Type</th><th>Amount</th><th>Notes</th></tr></thead><tbody>{cashMovements.length ? cashMovements.map(m => <tr key={m.id}><td>{dateLabel(m.movement_date)}</td><td>{m.movement_type === 'deposit' ? 'Deposit' : 'Withdrawal'}</td><td className={m.movement_type === 'deposit' ? 'positive-text' : 'negative-text'}>{m.movement_type === 'deposit' ? '+' : '−'}{money(Number(m.amount))}</td><td>{m.notes || '—'}</td></tr>) : <tr><td colSpan={4} className="muted">No deposits or withdrawals recorded yet.</td></tr>}</tbody></table></div></section>
