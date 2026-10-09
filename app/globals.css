@@ -28,3 +28,11 @@
 .cash-table-wrap table{width:100%;border-collapse:collapse}
 .cash-table-wrap th,.cash-table-wrap td{padding:12px 10px;text-align:left;border-bottom:1px solid var(--border-color,rgba(255,255,255,.08));font-size:13px}
 @media(max-width:760px){.account-summary-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.calendar-grid{gap:4px}.calendar-day,.calendar-empty{min-height:58px;padding:5px;border-radius:7px}.calendar-day strong{font-size:9px}.calendar-controls{gap:7px}}
+/* Append to existing app/globals.css */
+.compounding-risk-row{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-top:18px}
+.compounding-risk-row label{display:flex;flex-direction:column;gap:7px}
+.progress-label{display:flex;justify-content:space-between;gap:12px;margin-top:20px;font-size:13px}
+.compounding-progress{margin-top:8px;height:10px;overflow:hidden;border-radius:999px}
+.compounding-progress .bar-fill{height:100%;border-radius:999px;transition:width .2s ease}
+.compounding-panel .notice{margin-top:14px}
+@media(max-width:760px){.compounding-risk-row{grid-template-columns:1fr}}
