@@ -136,7 +136,12 @@ export default function Home() {
   const todayPnl = todayTrades.reduce((sum, t) => sum + Number(t.pnl), 0);
   const limit = Number(profile?.daily_loss_limit ?? dailyLimit ?? 300);
   const tradeCap = Math.min(MAX_TRADES_ALLOWED, Math.max(1, Number(profile?.max_trades ?? maxTrades ?? 2)));
-  const startBalance = Number(compoundingDay?.starting_balance ?? 0);
+  // Live balance: everything deposited minus withdrawn, plus every logged trade. Because this is computed
+  // from the current lists, it recalculates the moment a trade (or deposit) is logged, edited or deleted.
+  const contributedNow = cashMovements.reduce((s, m) => s + (m.movement_type === 'deposit' ? 1 : -1) * Number(m.amount), 0);
+  const liveBalance = Math.max(0, contributedNow + trades.reduce((s, t) => s + Number(t.pnl), 0));
+  // With no deposits recorded yet, fall back to the saved day snapshot (built from saved equity).
+  const startBalance = contributedNow > 0 ? liveBalance : Number(compoundingDay?.starting_balance ?? 0);
   const dailyTarget = Math.max(0, startBalance * Number(compoundingDay?.target_percent ?? COMPOUND_PERCENT) / 100);
   const targetProgress = dailyTarget > 0 ? Math.max(0, Math.min(100, todayPnl / dailyTarget * 100)) : 0;
   const dailyLossHit = todayPnl <= -Math.abs(limit);
