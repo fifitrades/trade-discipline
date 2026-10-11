@@ -36,3 +36,25 @@
 .compounding-progress .bar-fill{height:100%;border-radius:999px;transition:width .2s ease}
 .compounding-panel .notice{margin-top:14px}
 @media(max-width:760px){.compounding-risk-row{grid-template-columns:1fr}}
+/* GO / WAIT / STOP banner */
+.go-banner{display:flex;align-items:center;gap:18px;padding:18px 20px;border-radius:16px;border:1px solid;margin-bottom:16px}
+.go-word{font-size:clamp(28px,5vw,40px);font-weight:800;letter-spacing:.08em;min-width:110px}
+.go-detail strong{font-size:16px}
+.go-detail p{margin:4px 0 0;font-size:13px;color:var(--muted)}
+.go-go{border-color:rgba(134,200,161,.5);background:rgba(134,200,161,.09)}
+.go-go .go-word{color:var(--green)}
+.go-wait,.go-done{border-color:rgba(216,189,128,.55);background:rgba(216,189,128,.09)}
+.go-wait .go-word,.go-done .go-word{color:var(--gold)}
+.go-stop{border-color:rgba(240,141,136,.55);background:rgba(240,141,136,.1)}
+.go-stop .go-word{color:var(--red)}
+@media(max-width:600px){.go-banner{flex-direction:column;align-items:flex-start;gap:6px}}
+/* Pattern reports */
+.report-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin-top:16px}
+.report-block{min-width:0;padding:16px;border:1px solid var(--border);border-radius:12px;background:rgba(255,255,255,.02)}
+.report-subtitle{margin:16px 0 0;font-size:15px}
+.report-block .report-subtitle{margin:0 0 10px}
+.report-table{width:100%;border-collapse:collapse}
+.report-table th,.report-table td{padding:9px 8px;text-align:left;border-bottom:1px solid rgba(255,255,255,.08);font-size:13px}
+.low-sample{margin-left:8px;padding:2px 7px;border-radius:999px;border:1px solid var(--border);color:var(--muted);font-size:10px;letter-spacing:.04em;text-transform:uppercase;white-space:nowrap}
+.report-stats{grid-template-columns:repeat(3,minmax(0,1fr))}
+@media(max-width:900px){.report-grid{grid-template-columns:1fr}.report-stats{grid-template-columns:repeat(2,minmax(0,1fr))}}
