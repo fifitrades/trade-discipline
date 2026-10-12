@@ -53,6 +53,12 @@ create table if not exists public.trades (
   created_at timestamptz not null default now()
 );
 alter table public.trades add column if not exists trade_time time;
+-- Exit date and time (optional), for trades held past the entry day or just to record when you got out.
+-- A trade's profit or loss is booked on its exit date when one is logged.
+alter table public.trades add column if not exists exit_date date;
+alter table public.trades add column if not exists exit_time time;
+alter table public.trades drop constraint if exists trades_exit_after_entry_check;
+alter table public.trades add constraint trades_exit_after_entry_check check (exit_date is null or exit_date >= trade_date);
 -- Position size actually used, in LOTS (decimals allowed), and whether it broke the size guard when logged.
 -- The column keeps its original name, contracts, but stores lots.
 alter table public.trades add column if not exists contracts numeric(10,2);
