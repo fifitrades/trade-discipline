@@ -106,3 +106,78 @@ export function afterGreenVsRed(trades: PatternTrade[]): { afterGreen: DayGroup;
   };
   return { afterGreen: summarize('Day after a green day', groups.green), afterRed: summarize('Day after a red day', groups.red) };
 }
+
+// ---------------------------------------------------------------------------
+// Time held
+// ---------------------------------------------------------------------------
+
+export type HoldTrade = PatternTrade & { exit_date?: string | null; exit_time?: string | null };
+
+/** Minutes between entry and exit, or null if the exit (date and time) or entry time was not logged. */
+export function holdMinutes(t: HoldTrade): number | null {
+  if (!t.exit_date || !t.exit_time || !t.trade_time) return null;
+  const start = new Date(`${t.trade_date}T${t.trade_time.slice(0, 5)}:00`).getTime();
+  const end = new Date(`${t.exit_date}T${t.exit_time.slice(0, 5)}:00`).getTime();
+  const mins = Math.round((end - start) / 60000);
+  return Number.isFinite(mins) && mins >= 0 ? mins : null;
+}
+
+/** "45 min", "3h 10m", "2d 4h". */
+export function formatMinutes(mins: number): string {
+  const m = Math.round(mins);
+  const d = Math.floor(m / 1440);
+  const h = Math.floor((m % 1440) / 60);
+  const r = m % 60;
+  if (d > 0) return `${d}d ${h}h`;
+  if (h > 0) return `${h}h ${r}m`;
+  return `${r} min`;
+}
+
+const HOLD_EDGES: { label: string; from: number; to: number }[] = [
+  { label: 'Under 5 min', from: 0, to: 5 },
+  { label: '5 to 15 min', from: 5, to: 15 },
+  { label: '15 to 60 min', from: 15, to: 60 },
+  { label: '1 to 4 hours', from: 60, to: 240 },
+  { label: '4 hours to 1 day', from: 240, to: 1440 },
+  { label: 'Over 1 day', from: 1440, to: Infinity },
+];
+
+/** Trades grouped by how long they were held. Trades with no logged exit are counted separately. */
+export function byHoldTime(trades: HoldTrade[]): { buckets: Bucket[]; missing: number } {
+  const groups: HoldTrade[][] = HOLD_EDGES.map(() => []);
+  let missing = 0;
+  for (const t of trades) {
+    const mins = holdMinutes(t);
+    if (mins === null) { missing++; continue; }
+    const i = HOLD_EDGES.findIndex(e => mins >= e.from && mins < e.to);
+    if (i >= 0) groups[i].push(t);
+  }
+  const buckets = HOLD_EDGES.map((e, i) => makeBucket(e.label, groups[i])).filter(b => b.trades > 0);
+  return { buckets, missing };
+}
+
+export type HoldSummary = { n: number; avgMinutes: number; medianMinutes: number };
+
+const summarizeHold = (mins: number[]): HoldSummary => {
+  const n = mins.length;
+  if (!n) return { n: 0, avgMinutes: 0, medianMinutes: 0 };
+  const sorted = [...mins].sort((a, b) => a - b);
+  const mid = Math.floor(n / 2);
+  const median = n % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+  return { n, avgMinutes: mins.reduce((s, x) => s + x, 0) / n, medianMinutes: median };
+};
+
+/** How long you hold winners versus losers. Break-even trades are left out. */
+export function holdWinnersVsLosers(trades: HoldTrade[]): { winners: HoldSummary; losers: HoldSummary; missing: number } {
+  const w: number[] = [];
+  const l: number[] = [];
+  let missing = 0;
+  for (const t of trades) {
+    const mins = holdMinutes(t);
+    if (mins === null) { missing++; continue; }
+    const p = Number(t.pnl);
+    if (p > 0) w.push(mins);
+    else if (p < 0) l.push(mins);
+  }
+  return { winners: summarizeHold(w), losers: summarizeHold(l), missing };
+}
