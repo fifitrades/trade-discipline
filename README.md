@@ -12,6 +12,10 @@ A mobile-friendly trading journal MVP built with Next.js, TypeScript, and Supaba
 - FOMO, invalid setup, revenge/recovery, and trade-number signals
 - Configurable daily loss limit and daily trade cap
 - Responsive black and champagne-gold styling
+- Entry and exit date/time on every trade, with time held; profit or loss is booked on the exit date
+- Optional daily goal: none, a fixed amount, or compounding (a percent of your live balance), set by each user in their risk guardrails
+- Capital-protection rules (position size in lots, decimals like 0.80 allowed): size can only go down after a loss, session locks after 2 losses in a row, at the daily target, or after giving back half of the day's peak profit, 30-minute cooldown after every loss, oversized trades flagged automatically
+- Deposit friction: depositing on a losing day needs an acknowledgement and is tracked ("Deposited after red days")
 
 ## Important limitation
 
@@ -25,7 +29,9 @@ Create a project at https://supabase.com. In **Project Settings → API** (or th
 
 ### 2. Create the database tables
 
-In Supabase, open **SQL Editor → New query**, paste all of `supabase/schema.sql`, and run it. This creates the `profiles` and `trades` tables with Row Level Security policies.
+In Supabase, open **SQL Editor → New query**, paste all of `supabase/schema.sql`, and run it. This creates the `profiles`, `trades`, `cash_movements` and `compounding_days` tables with Row Level Security policies. It is safe to re-run on a database that already has some of them.
+
+**Upgrading an existing database?** Run `supabase/capital-protection-migration.sql` in the SQL Editor *before* deploying the new app code. It adds the columns the size guard and deposit tracking need.
 
 ### 3. Configure environment variables
 
