@@ -58,3 +58,14 @@
 .low-sample{margin-left:8px;padding:2px 7px;border-radius:999px;border:1px solid var(--border);color:var(--muted);font-size:10px;letter-spacing:.04em;text-transform:uppercase;white-space:nowrap}
 .report-stats{grid-template-columns:repeat(3,minmax(0,1fr))}
 @media(max-width:900px){.report-grid{grid-template-columns:1fr}.report-stats{grid-template-columns:repeat(2,minmax(0,1fr))}}
+/* Calendar: weekly total column at the end of each week */
+.calendar-grid{grid-template-columns:repeat(7,minmax(0,1fr)) minmax(96px,1.2fr)}
+.calendar-week{min-height:78px;border:1px solid var(--border);border-radius:10px;background:rgba(255,255,255,.035);padding:8px;display:flex;flex-direction:column;justify-content:center;gap:5px;min-width:0}
+.calendar-week span{font-size:11px;color:var(--muted,#9ca3af);letter-spacing:.04em;text-transform:uppercase}
+.calendar-week strong{font-size:clamp(11px,1.2vw,15px);overflow-wrap:anywhere}
+.calendar-week small{font-size:11px;color:var(--muted,#9ca3af)}
+.calendar-week.profit-day strong{color:var(--green)}
+.calendar-week.loss-day strong{color:var(--red)}
+.calendar-week.profit-day{border-color:rgba(65,190,130,.38);background:rgba(65,190,130,.09)}
+.calendar-week.loss-day{border-color:rgba(238,90,90,.38);background:rgba(238,90,90,.09)}
+@media(max-width:760px){.calendar-grid{grid-template-columns:repeat(7,minmax(0,1fr)) minmax(66px,1.3fr)}.calendar-week{min-height:58px;padding:5px;border-radius:7px}.calendar-week small{font-size:9px}.calendar-week strong{font-size:10px}}
