@@ -71,8 +71,8 @@
 @media(max-width:760px){.calendar-grid{grid-template-columns:repeat(7,minmax(0,1fr)) minmax(66px,1.3fr)}.calendar-week{min-height:58px;padding:5px;border-radius:7px}.calendar-week small{font-size:9px}.calendar-week strong{font-size:10px}}
 /* Account summary strip in the top bar */
 .topbar{flex-wrap:wrap}
-.summary-strip{display:flex;gap:10px;margin-left:auto}
-.summary-chip{display:flex;flex-direction:column;gap:3px;padding:8px 13px;border:1px solid var(--border);border-radius:10px;background:rgba(255,255,255,.03);min-width:104px}
+.summary-strip{order:3;flex:1 0 100%;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.summary-chip{display:flex;flex-direction:column;gap:3px;padding:10px 14px;border:1px solid var(--border);border-radius:10px;background:rgba(255,255,255,.03);min-width:0}
 .summary-chip span{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
 .summary-chip strong{font-size:clamp(14px,1.5vw,18px);overflow-wrap:anywhere}
-@media(max-width:700px){.summary-strip{order:3;flex:1 0 100%;margin-left:0;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}.summary-chip{min-width:0;padding:7px 9px}}
+@media(max-width:700px){.summary-strip{order:3;flex:1 0 100%;margin-left:0;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}.summary-chip{min-width:0;padding:7px 9px}}
